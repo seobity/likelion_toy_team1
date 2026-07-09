@@ -79,7 +79,7 @@ def profile_setup_view(request):
 @csrf_exempt
 def check_nickname(request):
     if request.method != "POST":
-        return JsonResponse({"result": "fail", "message": "잘못된 요청 메서드입니다."}, status=405) # 405 Method Not Allowed
+        return JsonResponse({"result": "fail", "message": "잘못된 요청 메서드입니다."}, status=405)
         
     try:
         data = json.loads(request.body)
@@ -88,7 +88,12 @@ def check_nickname(request):
         if len(nickname) < 2 or len(nickname) > 12:
             return JsonResponse({"result": "fail", "message": "닉네임은 2~12자여야 합니다."}, status=400)
             
-        if Profile.objects.filter(nickname=nickname).exists():
+        # 로그인 유저라면 본인 닉네임은 제외하고 중복 체크
+        query = Profile.objects.filter(nickname=nickname)
+        if request.user.is_authenticated:
+            query = query.exclude(user=request.user)
+            
+        if query.exists():
             return JsonResponse({"result": "fail", "message": "이미 사용 중인 닉네임입니다."}, status=400)
             
         return JsonResponse({"result": "success", "message": "사용 가능한 닉네임입니다."}, status=200)
@@ -107,11 +112,12 @@ def update_profile(request):
     if request.method != "POST":
         return JsonResponse({"result": "fail", "message": "잘못된 요청 메서드입니다."}, status=405)
 
-    try:
-        data = json.loads(request.body)
-        new_nickname = data.get('nickname', '').strip()
-    except json.JSONDecodeError:
-        return JsonResponse({"result": "fail", "message": "잘못된 데이터 형식입니다."}, status=400)
+    # FormData 형식으로 들어오는 데이터는 request.POST와 request.FILES로 받음
+    new_nickname = request.POST.get('nickname', '').strip()
+    profile_image = request.FILES.get('profile_image')  # 프론트의 파일 input name과 맞춰야 함
+
+    if not new_nickname:
+        return JsonResponse({"result": "fail", "message": "닉네임을 입력해주세요."}, status=400)
 
     if not (2 <= len(new_nickname) <= 12):
         return JsonResponse({"result": "fail", "message": "닉네임은 2자 이상 12자 이하로 입력해주세요."}, status=400)
@@ -120,13 +126,19 @@ def update_profile(request):
     if Profile.objects.filter(nickname=new_nickname).exclude(user=request.user).exists():
         return JsonResponse({"result": "fail", "message": "이미 사용 중인 닉네임입니다."}, status=400)
 
-    # 안전하게 프로필 가져오기 (get_or_create 등을 활용해 에러 방지 가능)
+    # 안전하게 프로필 가져오기
     try:
         profile = request.user.profile
     except Profile.DoesNotExist:
         profile = Profile.objects.create(user=request.user, nickname=f"유저_{request.user.id}")
 
+    # 데이터 업데이트 후 저장
     profile.nickname = new_nickname
+    
+    # 새로운 프로필 이미지 파일이 정상적으로 등록되었다면 저장함
+    if profile_image:
+        profile.profile_image = profile_image
+        
     profile.save()
 
     return JsonResponse({"result": "success", "message": "프로필 설정이 정상적으로 완료되었습니다."}, status=200)
